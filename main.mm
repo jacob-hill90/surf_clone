@@ -99,7 +99,7 @@ constexpr StartPlatform START_PLATFORM{-4.3, -0.6, -19.0, -12.35, 8.0};
 constexpr StartPlatform GOAL_PLATFORM{-5.5, 5.5, 18.35, 25.1, 1.10};
 
 constexpr double EYE_HEIGHT = 1.65;
-constexpr double GRAVITY = 17.0;
+constexpr double GRAVITY = 20.0;
 constexpr double JUMP_SPEED = 5.4;
 constexpr double GROUND_SPEED = 7.0;
 constexpr double SURF_WISH_SPEED = 9.0;
@@ -176,7 +176,7 @@ struct Player {
     // snap to the new position instead of interpolating across the course.
     bool update(Keys& keys, double dt, double mouseDX, double mouseDY) {
         bool teleported = keys.resetQueued || keys.topQueued || keys.secondQueued;
-        constexpr double MOUSE_SENS=0.0025;
+        constexpr double MOUSE_SENS=0.0015;
         yaw+=(double(keys.turnR)-double(keys.turnL))*1.65*dt + mouseDX*MOUSE_SENS;
         pitch=std::clamp(pitch+(double(keys.lookUp)-double(keys.lookDown))*1.2*dt
                          -mouseDY*MOUSE_SENS,-1.30,1.30);
