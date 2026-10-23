@@ -79,7 +79,7 @@ struct SurfRamp {
 };
 constexpr std::array<SurfRamp, 2> RAMPS {{
     {-4.4, -0.8, -11.0, 1.8, 4.20, +0.90, -0.15},
-    {+0.4, +4.0,   4.2, 17.0, 5.25, -0.90, -0.15}
+    {+0.4, +4.0,   4.2, 29.0, 5.25, -0.90, -0.15}
 }};
 
 // A solid, elevated runway behind the cyan ramp.
@@ -96,7 +96,7 @@ constexpr StartPlatform START_PLATFORM{-4.3, -0.6, -19.0, -12.35, 8.0};
 // Wide green finish deck beyond the end of the orange ramp.
 // A short gap makes this a landing challenge. The player needs to land
 // from above, flying alongside or passing underneath won't finish.
-constexpr StartPlatform GOAL_PLATFORM{-5.5, 5.5, 18.35, 25.1, 1.10};
+constexpr StartPlatform GOAL_PLATFORM{-5.5, 5.5, 29, 32, 1.10};
 
 constexpr double EYE_HEIGHT = 1.65;
 constexpr double GRAVITY = 20.0;
@@ -236,12 +236,12 @@ struct Player {
         position=position + velocity*dt;
 
         // Simple arena boundaries, not full capsule-vs-mesh collision.
-        if(position.x < -7.0 || position.x > 7.0) {
-            position.x=std::clamp(position.x,-7.0,7.0);
+        if(position.x < -11.0 || position.x > 11.0) {
+            position.x=std::clamp(position.x,-11.0,11.0);
             velocity.x=0.0;
         }
-        if(position.y < -19.5 || position.y > 25.5) {
-            position.y=std::clamp(position.y,-19.5,25.5);
+        if(position.y < -21.5 || position.y > 37.0) {
+            position.y=std::clamp(position.y,-21.5,37.0);
             velocity.y=0.0;
         }
 
@@ -320,10 +320,10 @@ struct Scene {
     std::vector<Triangle> triangles;
     Scene() {
         // Open sky and a checkerboard arena far below the elevated ramps.
-        for(int x=-8;x<8;x+=2) {
-            for(int y=-20;y<27;y+=2) {
+        for(int x=-12; x<12; x+=2) {
+            for(int y=-22; y<38; y+=2) {
                 bool dark=(((x+y)/2)&1)!=0;
-                Pixel tile=dark?rgb(49,60,72):rgb(62,76,90);
+                Pixel tile=dark?rgb(10, 105, 207):rgb(255, 255, 255);
                 addQuad(triangles,{double(x),double(y),0},
                     {double(x+2),double(y),0},
                     {double(x+2),double(y+2),0},
@@ -342,14 +342,14 @@ struct Scene {
                 {p.x1,yb,p.top},{p.x0,yb,p.top},deck);
         }
         // Solid sides down to the arena floor, plus brighter edges.
-        const Pixel platformSide=rgb(61,73,100);
+        const Pixel platformSide=rgb(254, 254, 255);
         for(double x:{p.x0,p.x1}) {
             addQuad(triangles,{x,p.y0,0},{x,p.y1,0},
                 {x,p.y1,p.top},{x,p.y0,p.top},platformSide);
         }
         for(double y:{p.y0,p.y1}) {
             addQuad(triangles,{p.x0,y,0},{p.x1,y,0},
-                {p.x1,y,p.top},{p.x0,y,p.top},rgb(74,88,115));
+                {p.x1,y,p.top},{p.x0,y,p.top},rgb(242, 242, 242));
         }
         // Yellow takeoff stripe immediately before the jump gap.
         addQuad(triangles,{p.x0,p.y1-0.35,p.top+0.018},
@@ -374,7 +374,7 @@ struct Scene {
                 double xa=goal.x0+(goal.x1-goal.x0)*col/GOAL_COLS;
                 double xb=goal.x0+(goal.x1-goal.x0)*(col+1)/GOAL_COLS;
                 Pixel tile=(row+col)%2 ? rgb(56,175,105) : rgb(77,209,122);
-                if(row==1) tile=(col%2) ? rgb(37,52,51) : rgb(233,244,224);
+                if(row==1) tile=(col%2) ? rgb(240, 242, 242) : rgb(233,244,224);
                 addQuad(triangles,{xa,ya,goal.top},{xb,ya,goal.top},
                     {xb,yb,goal.top},{xa,yb,goal.top},tile);
             }
@@ -410,14 +410,19 @@ struct Scene {
                    goal.top+3.64,goal.top+4.0,rgb(182,255,204));
 
         // Boundary walls to provide an obvious sense of depth.
-        for(int y=-20;y<27;y+=4) {
+        for(int y=-22; y<38; y+=4) {
             addQuad(triangles,{-7.5,double(y),0},{-7.5,double(y+4),0},
-                {-7.5,double(y+4),10},{-7.5,double(y),10},rgb(38,55,72));
+                {-11.5,double(y+4),10},{-11.5,double(y),10},rgb(255, 255, 255));
             addQuad(triangles,{7.5,double(y),0},{7.5,double(y+4),0},
-                {7.5,double(y+4),10},{7.5,double(y),10},rgb(43,54,73));
+                {11.5,double(y+4),10},{11.5,double(y),10},rgb(251, 251, 252));
         }
-        addQuad(triangles,{-7.5,26.5,0},{7.5,26.5,0},
-            {7.5,26.5,10},{-7.5,26.5,10},rgb(45,62,82));
+        addQuad(triangles,
+            {-11.5, 37.5, 0},
+            { 11.5, 37.5, 0},
+            { 11.5, 37.5, 12},
+            {-11.5, 37.5, 12},
+            rgb(230, 234, 238)
+        );
 
         for(int ri=0;ri<int(RAMPS.size());++ri) {
             const SurfRamp& r=RAMPS[ri];
@@ -621,7 +626,7 @@ struct Framebuffer {
         rect(w/2-5,h/2,11,1,rgb(225,237,243));
         rect(w/2,h/2-5,1,11,rgb(225,237,243));
         rect(7,7,625,45,rgb(20,29,44));
-        text(14,12,"TWO RAMP SURF COURSE",rgb(245,224,165),2);
+        text(14,12,"TWO RAMP COURSE",rgb(245,224,165),2);
         int speed=static_cast<int>(std::round(std::hypot(player.velocity.x,player.velocity.y)));
         std::string status=player.finished ? "GOAL" :
             (player.surfRamp>=0 ? (player.surfRamp==0 ? "SURF 1":"SURF 2")
