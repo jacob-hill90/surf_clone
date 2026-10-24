@@ -7,6 +7,7 @@
 #include <iterator>
 #include "../core/scene.h"
 #include "../core/physics.h"
+#include "../core/hud.h"
 
 Renderer renderer(640,360);
 Scene scene;
@@ -147,6 +148,11 @@ LRESULT CALLBACK WindowProc(HWND window,UINT msg,WPARAM wParam,LPARAM lParam){
         bmi.bmiHeader.biHeight=-renderer.framebuffer.height;
         bmi.bmiHeader.biPlanes=1;bmi.bmiHeader.biBitCount=32;bmi.bmiHeader.biCompression=BI_RGB;
         RECT rc;GetClientRect(window,&rc);
+        SurfHUD::draw(
+            renderer.framebuffer,
+            player,
+            captured
+        );
         SetStretchBltMode(dc,COLORONCOLOR);
         StretchDIBits(dc,0,0,rc.right,rc.bottom,0,0,renderer.framebuffer.width,renderer.framebuffer.height,
             renderer.framebuffer.pixels.data(),&bmi,DIB_RGB_COLORS,SRCCOPY);

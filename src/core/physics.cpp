@@ -1,460 +1,162 @@
-
 #include "physics.h"
-
 #include <algorithm>
 #include <cmath>
 
 namespace {
+// Adapted from the supplied original main.mm: same acceleration model and
+// movement constants, but Y-up (old file was Z-up).
+constexpr float GRAVITY = 20.0f;
+constexpr float JUMP_SPEED = 5.4f;
+constexpr float GROUND_WISH_SPEED = 7.0f;
+constexpr float SURF_WISH_SPEED = 9.0f;
+constexpr float AIR_WISH_SPEED = 2.8f;
+constexpr float GROUND_ACCEL = 17.0f;
+constexpr float SURF_ACCEL = 4.5f;
+constexpr float AIR_ACCEL = 12.0f;
+constexpr float GROUND_DRAG = 7.0f;
+constexpr float SURF_DRAG = 0.06f;
+constexpr float CONTACT_EPSILON = 0.035f;
 
-constexpr float GRAVITY = 19.0f;
-constexpr float JUMP_SPEED = 7.5f;
-
-constexpr float SURF_WISH_SPEED = 16.0f;
-constexpr float SURF_ACCEL = 40.0f;
-
-constexpr float GROUND_SPEED = 7.0f;
-constexpr float GROUND_ACCEL = 35.0f;
-constexpr float AIR_ACCEL = 9.0f;
-constexpr float GROUND_FRICTION = 8.0f;
-
-// Small allowance for floating-point errors
-// when staying in contact with a ramp.
-constexpr float CONTACT_EPSILON = 0.12f;;
-
-constexpr float RESPAWN_Y = -4.0f;
-
-float dot(Vec3 a, Vec3 b) {
-    return a.x*b.x + a.y*b.y + a.z*b.z;
+float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+Vec3 unit(Vec3 v) {
+    const float length = std::sqrt(dot(v,v));
+    return length > 1e-6f ? Vec3{v.x/length,v.y/length,v.z/length} : Vec3{};
 }
-
-Vec3 normalize(Vec3 v) {
-    float length = std::sqrt(dot(v, v));
-
-    if (length < 0.00001f)
-        return {0, 0, 0};
-
-    return {
-        v.x / length,
-        v.y / length,
-        v.z / length
-    };
+Vec3 normal(const SurfRamp& r) {
+    return unit({-r.slopeX, 1.0f, -r.slopeY});
 }
-
-// Surface normal for height(x,z).
-Vec3 rampNormal(const SurfRamp& ramp) {
-    return normalize({
-        -ramp.slopeX,
-         1.0f,
-        -ramp.slopeY
-    });
+bool inside(const SurfRamp& r, float x, float z) {
+    return x >= r.x0 && x <= r.x1 && z >= r.y0 && z <= r.y1;
 }
-
-Vec3 projectOntoPlane(Vec3 direction, Vec3 normal) {
-    float amount = dot(direction, normal);
-
-    return {
-        direction.x - normal.x * amount,
-        direction.y - normal.y * amount,
-        direction.z - normal.z * amount
-    };
+bool inside(const Platform& p, float x, float z) {
+    return x >= p.x0 && x <= p.x1 && z >= p.y0 && z <= p.y1;
 }
-
-// Remove velocity directed into a surface.
-// Keep all velocity parallel to that surface.
-void clipVelocity(Vec3& velocity, Vec3 normal) {
-    float intoSurface = dot(velocity, normal);
-
-    if (intoSurface < 0.0f) {
-        velocity.x -= normal.x * intoSurface;
-        velocity.y -= normal.y * intoSurface;
-        velocity.z -= normal.z * intoSurface;
+void clipInto(Vec3& velocity, Vec3 n) {
+    float into = dot(velocity,n);
+    if (into < 0.0f) {
+        velocity.x -= n.x*into;
+        velocity.y -= n.y*into;
+        velocity.z -= n.z*into;
     }
 }
-
-bool insideRamp(
-    const SurfRamp& ramp,
-    float x,
-    float z
-) {
-    return x >= ramp.x0 &&
-           x <= ramp.x1 &&
-           z >= ramp.y0 &&
-           z <= ramp.y1;
+// Source/Quake-inspired acceleration. This caps velocity only in the
+// *requested direction*, not total speed, so momentum can be preserved.
+void accelerate(Player& player, Vec3 wish, float wishSpeed, float accel, float dt) {
+    float along = player.velocity.x*wish.x + player.velocity.z*wish.z;
+    float add = wishSpeed - along;
+    if (add <= 0.0f) return;
+    float amount = std::min(add, accel*wishSpeed*dt);
+    player.velocity.x += wish.x*amount;
+    player.velocity.z += wish.z*amount;
 }
-
-// Check whether the player's feet are
-// resting on one of our ramp surfaces.
-const SurfRamp* findSupportingRamp(
-    const Player& player,
-    const Scene& scene
-) {
-    for (const SurfRamp& ramp : scene.ramps) {
-        if (!insideRamp(
-                ramp,
-                player.position.x,
-                player.position.z)) {
-            continue;
-        }
-
-        float surfaceY = ramp.height(
-            player.position.x,
-            player.position.z
-        );
-
-        if (std::abs(player.position.y - surfaceY)
-                <= CONTACT_EPSILON) {
-            return &ramp;
-        }
-    }
-
-    return nullptr;
-}
-
-// Acceleration in the camera-relative
-// horizontal direction.
-//
-// This preserves existing speed rather
-// than replacing the player's velocity.
-void accelerate(
-    Vec3& velocity,
-    Vec3 wishDirection,
-    float wishSpeed,
-    float acceleration,
-    float dt
-) {
-    float currentSpeed =
-        velocity.x * wishDirection.x +
-        velocity.z * wishDirection.z;
-
-    float addSpeed = wishSpeed - currentSpeed;
-
-    if (addSpeed <= 0.0f)
-        return;
-
-    float accelerationSpeed =
-        acceleration * dt;
-
-    accelerationSpeed =
-        std::min(accelerationSpeed, addSpeed);
-
-    velocity.x +=
-        wishDirection.x * accelerationSpeed;
-
-    velocity.z +=
-        wishDirection.z * accelerationSpeed;
-}
-
-void applyGroundFriction(Vec3& velocity, float dt) {
-    float speed = std::hypot(
-        velocity.x,
-        velocity.z
-    );
-
-    if (speed < 0.0001f) {
-        velocity.x = 0.0f;
-        velocity.z = 0.0f;
-        return;
-    }
-
-    float newSpeed = std::max(
-        0.0f,
-        speed - speed * GROUND_FRICTION * dt
-    );
-
-    float scale = newSpeed / speed;
-
-    velocity.x *= scale;
-    velocity.z *= scale;
-}
-
 } // namespace
 
-// =====================================
-// RESPAWN
-// =====================================
-
-void respawn(Player& player) {
-    player.position = {-2.5f, 8.0f, -17.5f};
-    player.velocity = {0.0f, 0.0f, 0.0f};
-
-    player.grounded = true;
-    player.jumpWasDown = true;
+void respawn(Player& p) {
+    p.position = {-2.5f, 8.0f, -17.5f};
+    p.velocity = {};
+    p.grounded = true;
+    p.onPlatform = true;
+    p.surfRamp = -1;
+    p.touchedFirst = false;
+    p.transferred = false;
+    p.finished = false;
+    p.runSeconds = 0.0f;
+    p.jumpWasDown = true; // release Space before jumping again
 }
 
-// =====================================
-// PLAYER PHYSICS
-// =====================================
+void updatePhysics(Player& p, const Scene& scene,
+                   const MoveInput& input, float yaw, float dt) {
+    if (dt <= 0.0f || dt > 0.1f) return;
+    const bool newJump = input.jump && !p.jumpWasDown;
+    p.jumpWasDown = input.jump;
+    if (p.finished) return; // Freeze simulation AND timer on victory.
+    p.runSeconds += dt;
 
-void updatePhysics(
-    Player& player,
-    const Scene& scene,
-    const MoveInput& input,
-    float cameraYaw,
-    float dt
-) {
-    // ---------------------------------
-    // 1. Determine existing ground state
-    // ---------------------------------
-
-    const SurfRamp* supportingRamp = nullptr;
-
-    if (player.grounded) {
-        supportingRamp =
-            findSupportingRamp(player, scene);
+    const int previousRamp = p.surfRamp;
+    const bool wasGrounded = p.grounded;
+    if (newJump && (wasGrounded || previousRamp >= 0)) {
+        p.velocity.y = std::max(p.velocity.y, 0.0f) + JUMP_SPEED;
+        p.grounded = false;
+        p.surfRamp = -1;
+        p.onPlatform = false;
     }
-
-    bool onRamp = supportingRamp != nullptr;
-
-    // ---------------------------------
-    // 2. Build camera-relative input
-    // ---------------------------------
 
     float forward = input.forward;
-    float right = input.right;
-
-    float inputLength =
-        std::hypot(forward, right);
-
-    if (inputLength > 1.0f) {
-        forward /= inputLength;
-        right /= inputLength;
-    }
-
-    float sinYaw = std::sin(cameraYaw);
-    float cosYaw = std::cos(cameraYaw);
-
-    Vec3 wishDirection{
-        sinYaw * forward + cosYaw * right,
+    float strafe = input.right;
+    float length = std::hypot(forward, strafe);
+    if (length > 0.0f) { forward /= length; strafe /= length; }
+    Vec3 wish{
+        std::sin(yaw)*forward + std::cos(yaw)*strafe,
         0.0f,
-        cosYaw * forward - sinYaw * right
+        std::cos(yaw)*forward - std::sin(yaw)*strafe
     };
 
-    float wishLength = std::hypot(
-        wishDirection.x,
-        wishDirection.z
-    );
-
-    if (wishLength > 0.0001f) {
-        wishDirection.x /= wishLength;
-        wishDirection.z /= wishLength;
-    }
-
-    // ---------------------------------
-    // 3. Jumping
-    // ---------------------------------
-
-    bool jumpPressed =
-        input.jump && !player.jumpWasDown;
-
-    player.jumpWasDown = input.jump;
-
-    bool jumping =
-        jumpPressed && player.grounded;
-
-    if (jumping) {
-        // Add upward speed without
-        // erasing horizontal momentum.
-        player.velocity.y = JUMP_SPEED;
-        player.grounded = false;
-        onRamp = false;
-    }
-
-    // ---------------------------------
-    // 4. Friction and acceleration
-    // ---------------------------------
-
-    // Friction only on flat platforms.
-    // Surf ramps deliberately stay slippery.
-    if (player.grounded && !onRamp) {
-        applyGroundFriction(
-            player.velocity, dt
-        );
-    }
-
-
-if (wishLength > 0.0001f) {
-
-    if (onRamp) {
-        // Find the ramp's surface normal.
-        Vec3 normal = rampNormal(*supportingRamp);
-
-        // Convert horizontal input into
-        // movement along the ramp surface.
-        Vec3 surfDirection =
-            projectOntoPlane(wishDirection, normal);
-
-        surfDirection = normalize(surfDirection);
-
-        // Add velocity along the ramp,
-        // including the vertical component.
-        float currentSpeed =
-            dot(player.velocity, surfDirection);
-
-        float addSpeed =
-            SURF_WISH_SPEED - currentSpeed;
-
-        if (addSpeed > 0.0f) {
-            float accelSpeed =
-                std::min(
-                    SURF_ACCEL * dt,
-                    addSpeed
-                );
-
-            player.velocity.x +=
-                surfDirection.x * accelSpeed;
-
-            player.velocity.y +=
-                surfDirection.y * accelSpeed;
-
-            player.velocity.z +=
-                surfDirection.z * accelSpeed;
-        }
-
+    if (p.surfRamp >= 0) {
+        float drag = std::exp(-SURF_DRAG*dt);
+        p.velocity.x *= drag; p.velocity.z *= drag;
+        if (length > 0.0f) accelerate(p,wish,SURF_WISH_SPEED,SURF_ACCEL,dt);
+    } else if (p.grounded) {
+        float drag = std::exp(-GROUND_DRAG*dt);
+        p.velocity.x *= drag; p.velocity.z *= drag;
+        if (length > 0.0f) accelerate(p,wish,GROUND_WISH_SPEED,GROUND_ACCEL,dt);
+        p.velocity.y = 0.0f;
     } else {
-        float accel =
-            player.grounded
-                ? GROUND_ACCEL
-                : AIR_ACCEL;
-
-        accelerate(
-            player.velocity,
-            wishDirection,
-            GROUND_SPEED,
-            accel,
-            dt
-        );
-    }
-}
-
-
-    // ---------------------------------
-    // 5. Gravity
-    // ---------------------------------
-
-    // Always apply gravity. Ramp contact
-    // will remove the component pushing
-    // into the sloped surface.
-    player.velocity.y -= GRAVITY * dt;
-
-    if (onRamp && !jumping) {
-        clipVelocity(
-            player.velocity,
-            rampNormal(*supportingRamp)
-        );
+        if (length > 0.0f) accelerate(p,wish,AIR_WISH_SPEED,AIR_ACCEL,dt);
     }
 
-    // ---------------------------------
-    // 6. Integrate position
-    // ---------------------------------
+    p.velocity.y -= GRAVITY*dt;
+    if (p.surfRamp >= 0)
+        clipInto(p.velocity,normal(scene.ramps[p.surfRamp]));
+    if (p.grounded && p.surfRamp < 0) p.velocity.y = 0.0f;
 
-    Vec3 previous = player.position;
+    const Vec3 previous = p.position;
+    p.position.x += p.velocity.x*dt;
+    p.position.y += p.velocity.y*dt;
+    p.position.z += p.velocity.z*dt;
 
-    player.position.x += player.velocity.x * dt;
-    player.position.y += player.velocity.y * dt;
-    player.position.z += player.velocity.z * dt;
+    p.grounded = false;
+    p.onPlatform = false;
+    p.surfRamp = -1;
 
-    // Recalculate contact every tick.
-    player.grounded = false;
-
-    // ---------------------------------
-    // 7. Flat platform collisions
-    // ---------------------------------
-
-    auto collidePlatform =
-        [&](const Platform& platform) {
-
-        bool inside =
-            player.position.x >= platform.x0 &&
-            player.position.x <= platform.x1 &&
-            player.position.z >= platform.y0 &&
-            player.position.z <= platform.y1;
-
-        if (!inside)
-            return;
-
-        bool crossingTop =
-            previous.y >=
-                platform.top - CONTACT_EPSILON &&
-            player.position.y <= platform.top;
-
-        if (crossingTop &&
-            player.velocity.y <= 0.0f) {
-
-            player.position.y = platform.top;
-            player.velocity.y = 0.0f;
-            player.grounded = true;
-        }
-    };
-
-    collidePlatform(scene.start);
-    collidePlatform(scene.goal);
-
-    // ---------------------------------
-    // 8. Surf ramp collisions
-    // ---------------------------------
-
-    if (!player.grounded) {
-        for (const SurfRamp& ramp : scene.ramps) {
-
-            float x = player.position.x;
-            float z = player.position.z;
-
-            if (!insideRamp(ramp, x, z))
-                continue;
-
-            float surfaceY = ramp.height(x, z);
-
-            // Previous height measured
-            // against the same ramp surface.
-            float previousSurfaceY =
-                ramp.height(previous.x, previous.z);
-
-            float previousDistance =
-                previous.y - previousSurfaceY;
-
-            float currentDistance =
-                player.position.y - surfaceY;
-
-            // Did the feet cross the ramp
-            // from above, or remain very
-            // close to its surface?
-            bool approachingFromAbove =
-                previousDistance >=
-                    -CONTACT_EPSILON;
-
-            bool touchedSurface =
-                currentDistance <=
-                    CONTACT_EPSILON;
-
-            Vec3 normal = rampNormal(ramp);
-
-            float normalSpeed =
-                dot(player.velocity, normal);
-
-            // Only resolve when moving into
-            // the ramp, not away from it.
-            if (approachingFromAbove &&
-                touchedSurface &&
-                normalSpeed <= 0.0f) {
-
-                player.position.y = surfaceY;
-
-                clipVelocity(
-                    player.velocity,
-                    normal
-                );
-
-                player.grounded = true;
-                break;
-            }
+    // The first ramp found from above wins. Allow continuing contact with
+    // the old ramp within a small tolerance, as the reference game does.
+    for (int i=0;i<(int)scene.ramps.size();++i) {
+        const auto& ramp = scene.ramps[i];
+        if (!inside(ramp,p.position.x,p.position.z)) continue;
+        const float h = ramp.height(p.position.x,p.position.z);
+        const float oldH = ramp.height(previous.x,previous.z);
+        const bool fromAbove = previous.y >= oldH-CONTACT_EPSILON || previousRamp==i;
+        const bool touched = (fromAbove && p.position.y<=h) ||
+                             (previousRamp==i && p.position.y<=h+CONTACT_EPSILON);
+        if (touched && dot(p.velocity,normal(ramp)) < 0.35f) {
+            p.position.y = h;
+            clipInto(p.velocity,normal(ramp));
+            p.surfRamp = i;
+            p.grounded = true;
+            if (i==0) p.touchedFirst = true;
+            if (i==1 && p.touchedFirst) p.transferred = true;
+            break;
         }
     }
 
-    // ---------------------------------
-    // 9. Respawn
-    // ---------------------------------
-
-    if (player.position.y < RESPAWN_Y) {
-        respawn(player);
+    if (p.surfRamp<0) {
+        auto landed = [&](const Platform& platform) {
+            return inside(platform,p.position.x,p.position.z) &&
+                previous.y >= platform.top-CONTACT_EPSILON &&
+                p.position.y <= platform.top+CONTACT_EPSILON &&
+                p.velocity.y <= 0.0f;
+        };
+        if (landed(scene.start)) {
+            p.position.y=scene.start.top; p.velocity.y=0;
+            p.grounded=true; p.onPlatform=true;
+        } else if (landed(scene.goal)) {
+            p.position.y=scene.goal.top; p.velocity={};
+            p.grounded=true; p.onPlatform=true;
+            p.finished=true;
+        }
     }
+
+    // Checkerboard floor = fail/respawn. The original reset at floor height.
+    if (!p.grounded && p.surfRamp<0 && p.position.y<=0.0f)
+        respawn(p);
 }

@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include "../core/hud.h"
 
 #include <algorithm>
 #include <chrono>
@@ -212,6 +213,12 @@ void updateGame(float dt) {
             camera
         );
     }
+
+        SurfHUD::draw(
+        renderer.framebuffer,
+        player,
+        mouseCaptured
+    );
 
     const int width =
         renderer.framebuffer.width;
