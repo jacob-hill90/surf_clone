@@ -1,1 +1,17 @@
+# CMake build directories
 build/
+build-*/
+cmake-build-*/
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.app/
+*.pdb
+*.ilk
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
